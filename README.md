@@ -22,3 +22,21 @@ A component pins this repository twice — the `ref:` of the CI include and the
 submodule commit. Keep them on the same tag: a pipeline running the template
 from one version against configs from another is the drift this repository
 exists to prevent.
+
+## GitHub caveat
+
+While the component repositories are private on GitHub, neither half of this setup
+works there, and all three failures were reproduced on the organisation:
+
+* a reusable workflow living in a private repository cannot be called — the run
+  ends in `startup_failure` before any job starts, even with the repository's
+  Actions access set to `organization`;
+* the default `GITHUB_TOKEN` reaches its own repository only, so checking out this
+  repository as a submodule fails with `remote: Repository not found`;
+* for the same reason `transaction-engine` cannot fetch its sibling components, and
+  its standalone build dies with `fatal: Could not read from remote repository`.
+
+So on GitHub every component carries a self-contained build-and-test workflow and
+`transaction-engine` runs only on demand. GitLab has neither limitation: a job token
+reaches sibling projects of the same group, subject to the project's job-token
+allowlist, which has to be set for `transaction-engine`.
