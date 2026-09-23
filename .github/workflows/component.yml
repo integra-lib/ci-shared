@@ -1,0 +1,86 @@
+# Reusable pipeline for every integra-lib component — the GitHub counterpart of
+# templates/component.yml. A component calls it with four lines, so the pipeline
+# itself is never copied:
+#
+#   jobs:
+#     component:
+#       uses: integra-lib/ci-shared/.github/workflows/component.yml@v0.1.0
+#       secrets: inherit
+
+name: component
+
+on:
+  workflow_call:
+
+jobs:
+  # A dangling symlink makes clang-format fall back to its built-in LLVM style and
+  # lets pre-commit run with no configuration, both of which pass quietly. Prove the
+  # configs are readable before trusting any linter.
+  config-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configs resolve and match ci-shared
+        run: |
+          for f in .clang-format .clang-tidy .pre-commit-config.yaml; do
+            if [ ! -r "$f" ]; then
+              echo "$f is not readable — is the ci-shared submodule checked out?" >&2
+              exit 1
+            fi
+            echo "ok: $f -> $(readlink -f "$f")"
+          done
+          diff -q .clang-format ci-shared/.clang-format
+          diff -q .clang-tidy ci-shared/.clang-tidy
+          diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
+          diff -q .releaserc.js ci-shared/.releaserc.js
+          diff -q commitlint.config.js ci-shared/commitlint.config.js
+
+  pre-commit:
+    runs-on: ubuntu-latest
+    needs: [config-check]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cxx: g++
+          - compiler: clang
+            cxx: clang++
+    name: build (${{ matrix.compiler }})
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure
+
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [pre-commit, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
