@@ -102,3 +102,21 @@ release:
   script:
     - npm ci
     - npx semantic-release
+
+# Docker image build job - manual trigger to rebuild the CI image
+docker:
+  stage: .pre
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:$LINUX_IMAGE -f ci-shared/Dockerfile .
+    - docker push $CI_REGISTRY_IMAGE:$LINUX_IMAGE
+  rules:
+    - when: manual
+      allow_failure: true
+  timeout: 30m
