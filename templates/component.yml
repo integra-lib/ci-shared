@@ -4,7 +4,7 @@ stages:
   - docker
 
 variables:
-  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_STRATEGY: normal
   LINUX_IMAGE: arch
 
 before_script:
