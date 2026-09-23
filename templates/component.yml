@@ -1,11 +1,11 @@
 stages:
   - lint
   - test
-  - build
   - docker
 
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
+  LINUX_IMAGE: arch
 
 before_script:
   - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.integrasources.com/".insteadOf "https://gitlab.integrasources.com/"
