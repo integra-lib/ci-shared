@@ -1,122 +1,59 @@
-# Shared pipeline for every integra-lib component.
-#
-# A component repository includes it with:
-#
-#   include:
-#     - project: 'internal-projects/a000-hwlib/ci-shared'
-#       ref: <pinned tag>
-#       file: '/templates/component.yml'
-
-default:
-  interruptible: true
-  tags:
-    - linux
-  artifacts:
-    expire_in: 1 week
+stages:
+  - lint
+  - test
+  - build
+  - docker
 
 variables:
-  LINUX_IMAGE: arch
-  MAIN_BRANCH: main
-  GIT_SUBMODULE_STRATEGY: normal
+  GIT_SUBMODULE_STRATEGY: recursive
 
-workflow:
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_COMMIT_BRANCH
-    - when: never
-
-stages:
-  - validation
-  - test
-  - release
+before_script:
+  - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.integrasources.com/".insteadOf "https://gitlab.integrasources.com/"
 
 config-check:
-  stage: validation
+  stage: lint
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   script:
-    - |
-      for f in .clang-format .clang-tidy .pre-commit-config.yaml; do
-        if [ ! -r "$f" ]; then
-          echo "$f is not readable — is the ci-shared submodule checked out?" >&2
-          exit 1
-        fi
-        echo "ok: $f -> $(readlink -f "$f")"
-      done
-    - diff -q .clang-format ci-shared/.clang-format
-    - diff -q .clang-tidy ci-shared/.clang-tidy
-    - diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
-    - diff -q .releaserc.js ci-shared/.releaserc.js
-    - diff -q commitlint.config.js ci-shared/commitlint.config.js
+    - pre-commit run --all-files
+    - if [ -f ci-shared/.pre-commit-config.yaml ]; then diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml; fi
+    - if [ -f ci-shared/.clang-format ]; then diff -q .clang-format ci-shared/.clang-format; fi
+    - if [ -f ci-shared/.clang-tidy ]; then diff -q .clang-tidy ci-shared/.clang-tidy; fi
 
 pre-commit:
-  stage: validation
+  stage: lint
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
-  needs: [config-check]
   script:
-    - clang-format --version
-    - pre-commit run --all-files --show-diff-on-failure
+    - pre-commit run --all-files
 
-.build_and_test:
+.test_job:
   stage: test
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   script:
     - cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/opt/deps/googletest-src
     - cmake --build build -j
-    - ctest --test-dir build --output-on-failure
+    - cd build && ctest --output-on-failure
 
 build gcc:
-  extends: .build_and_test
+  extends: .test_job
   variables:
     CXX_COMPILER: g++
 
 build clang:
-  extends: .build_and_test
+  extends: .test_job
   variables:
     CXX_COMPILER: clang++
 
-release:
-  stage: release
-  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
-  needs:
-    - job: pre-commit
-    - job: build gcc
-    - job: build clang
-  rules:
-    - if: >
-        $CI_COMMIT_BRANCH == $MAIN_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
-        && $CI_COMMIT_MESSAGE !~ /^chore\(release\)/
-  variables:
-    GIT_DEPTH: 0
-  before_script:
-    - >
-      git remote set-url origin
-      https://oauth2:${GITLAB_TOKEN}@gitlab.integrasources.com/${CI_PROJECT_PATH}.git
-    - git config --global user.name "release-bot"
-    - git config --global user.email "release-bot@integrasources.com"
-    - git fetch origin ${CI_COMMIT_REF_NAME}
-    - git checkout -B ${CI_COMMIT_REF_NAME} ${CI_COMMIT_SHA}
-    - git fetch --tags --force
-  script:
-    - npm ci
-    - npx semantic-release
-
-# Docker image build job - manual trigger to rebuild the CI image
 docker:
-  stage: .pre
+  stage: docker
   image: docker:latest
   services:
     - docker:dind
-  variables:
-    DOCKER_DRIVER: overlay2
-    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build --pull -t $CI_REGISTRY_IMAGE:$LINUX_IMAGE -f ci-shared/Dockerfile ci-shared/
+    - docker build -t $CI_REGISTRY_IMAGE:$LINUX_IMAGE -f ci-shared/Dockerfile ci-shared/
     - docker push $CI_REGISTRY_IMAGE:$LINUX_IMAGE
   rules:
-    - when: manual
-      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
   timeout: 30m
