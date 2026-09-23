@@ -18,10 +18,8 @@ default:
     expire_in: 1 week
 
 variables:
-  CI_IMAGE: registry.gitlab.integrasources.com/internal-projects/a000-hwlib/ci-shared:arch
+  LINUX_IMAGE: arch
   MAIN_BRANCH: main
-  # The style configs are symlinks into the ci-shared submodule. Without this the
-  # links dangle and the linters silently fall back to their built-in defaults.
   GIT_SUBMODULE_STRATEGY: normal
 
 workflow:
@@ -38,12 +36,9 @@ stages:
   - test
   - release
 
-# A dangling symlink makes clang-format fall back to LLVM style and lets
-# pre-commit run with no configuration at all, both of which pass quietly. The
-# pipeline therefore proves the configs are readable before trusting any linter.
 config-check:
   stage: validation
-  image: ${CI_IMAGE}
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   script:
     - |
       for f in .clang-format .clang-tidy .pre-commit-config.yaml; do
@@ -56,13 +51,12 @@ config-check:
     - diff -q .clang-format ci-shared/.clang-format
     - diff -q .clang-tidy ci-shared/.clang-tidy
     - diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
-    # The release tooling is copied rather than linked, so it is compared instead.
     - diff -q .releaserc.js ci-shared/.releaserc.js
     - diff -q commitlint.config.js ci-shared/commitlint.config.js
 
 pre-commit:
   stage: validation
-  image: ${CI_IMAGE}
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   needs: [config-check]
   script:
     - clang-format --version
@@ -70,7 +64,7 @@ pre-commit:
 
 .build_and_test:
   stage: test
-  image: ${CI_IMAGE}
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   script:
     - cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER}
     - cmake --build build -j
@@ -88,7 +82,7 @@ build clang:
 
 release:
   stage: release
-  image: ${CI_IMAGE}
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   needs:
     - job: pre-commit
     - job: build gcc
