@@ -1,0 +1,117 @@
+# Shared pipeline for every integra-lib component.
+#
+# A component repository includes it with:
+#
+#   include:
+#     - project: 'internal-projects/integra-lib/ci-shared'
+#       ref: <pinned tag>
+#       file: '/templates/component.yml'
+#
+# The include only brings this YAML. Everything else the jobs read — the style
+# configs — comes from the ci-shared submodule, hence GIT_SUBMODULE_STRATEGY.
+
+default:
+  interruptible: true
+  tags:
+    - linux
+  artifacts:
+    expire_in: 1 week
+
+variables:
+  LINUX_IMAGE: arch
+  MAIN_BRANCH: main
+  # The style configs are symlinks into the ci-shared submodule. Without this the
+  # links dangle and the linters silently fall back to their built-in defaults.
+  GIT_SUBMODULE_STRATEGY: normal
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - when: never
+
+stages:
+  - validation
+  - test
+  - release
+
+# A dangling symlink makes clang-format fall back to LLVM style and lets
+# pre-commit run with no configuration at all, both of which pass quietly. The
+# pipeline therefore proves the configs are readable before trusting any linter.
+config-check:
+  stage: validation
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  script:
+    - |
+      for f in .clang-format .clang-tidy .pre-commit-config.yaml; do
+        if [ ! -r "$f" ]; then
+          echo "$f is not readable — is the ci-shared submodule checked out?" >&2
+          exit 1
+        fi
+        echo "ok: $f -> $(readlink -f "$f")"
+      done
+    - diff -q .clang-format ci-shared/.clang-format
+    - diff -q .clang-tidy ci-shared/.clang-tidy
+    - diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
+    # The release tooling is copied rather than linked, so it is compared instead.
+    - diff -q .releaserc.js ci-shared/.releaserc.js
+    - diff -q commitlint.config.js ci-shared/commitlint.config.js
+
+pre-commit:
+  stage: validation
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  needs: [config-check]
+  script:
+    - clang-format --version
+    - pre-commit run --all-files --show-diff-on-failure
+
+.build_and_test:
+  stage: test
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  script:
+    - cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER}
+    - cmake --build build -j
+    - ctest --test-dir build --output-on-failure
+
+build gcc:
+  extends: .build_and_test
+  variables:
+    CXX_COMPILER: g++
+
+build clang:
+  extends: .build_and_test
+  variables:
+    CXX_COMPILER: clang++
+
+release:
+  stage: release
+  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  needs:
+    - job: pre-commit
+    - job: build gcc
+    - job: build clang
+  rules:
+    - if: >
+        $CI_COMMIT_BRANCH == $MAIN_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+        && $CI_COMMIT_MESSAGE !~ /^chore\(release\)/
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - >
+      git remote set-url origin
+      https://oauth2:${GITLAB_TOKEN}@gitlab.integrasources.com/${CI_PROJECT_PATH}.git
+    - git config --global user.name "release-bot"
+    - git config --global user.email "release-bot@integrasources.com"
+    - git fetch origin ${CI_COMMIT_REF_NAME}
+    - git checkout -B ${CI_COMMIT_REF_NAME} ${CI_COMMIT_SHA}
+    - git fetch --tags --force
+  script:
+    - npm ci
+    - npx semantic-release
