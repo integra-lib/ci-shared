@@ -1,5 +1,4 @@
 # CI image for all integra-lib components.
-# Build: docker build -t <registry>/<project>:arch -f ci-shared/Dockerfile ci-shared/
 
 FROM archlinux:latest
 
@@ -11,6 +10,7 @@ RUN pacman -Syu --noconfirm \
     clang \
     llvm \
     git \
+    openssh \
     npm \
     python \
     python-pip \
@@ -24,19 +24,20 @@ RUN mkdir -p /opt/deps && \
     git clone --depth 1 --branch v1.15.2 https://github.com/google/googletest.git /opt/deps/googletest-src || \
     echo "googletest fetch failed - builds will need internet access"
 
-# Pre-install pre-commit hooks (requires network access during build)
+# Pre-install pre-commit hooks
 COPY .pre-commit-config.yaml /tmp/
 RUN cd /tmp && \
     git init -q && \
     git add .pre-commit-config.yaml && \
     pre-commit install-hooks || \
-    echo "pre-commit hooks install failed - will need network access at runtime"
+    echo "pre-commit hooks install failed"
 
 # Verify installation
 RUN cmake --version && \
     g++ --version && \
     clang++ --version && \
     clang-format --version && \
+    ssh -V && \
     pre-commit --version && \
     npm --version
 
