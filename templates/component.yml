@@ -3,7 +3,7 @@
 # A component repository includes it with:
 #
 #   include:
-#     - project: 'internal-projects/integra-lib/ci-shared'
+#     - project: 'internal-projects/a000-hwlib/ci-shared'
 #       ref: <pinned tag>
 #       file: '/templates/component.yml'
 #
