@@ -78,6 +78,16 @@ pre-commit:
   # The runner cannot reach GitHub reliably, so FetchContent is pointed at the
   # googletest copy in the ci-shared submodule instead of cloning it. The copy's
   # version must match the GIT_TAG the components declare (see README).
+  #
+  # Components with siblings (settings-record, transaction-engine) fetch them
+  # over HTTPS from this server. git has no credentials in the job, so the clone
+  # dies on "could not read Username"; the job token is injected here. The
+  # sibling project must list the dependant in its job-token allowlist.
+  before_script:
+    - >
+      git config --global
+      url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf
+      "https://${CI_SERVER_HOST}/"
   script:
     - >
       cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER}

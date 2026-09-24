@@ -43,6 +43,15 @@ otherwise CI tests against a different googletest than developers do. To update:
 
 then change the `GIT_TAG` in every component and the version above together.
 
+## Sibling components in CI
+
+`settings-record` and `transaction-engine` fetch other components over HTTPS
+from `HWLIB_REMOTE`. The build jobs rewrite `https://${CI_SERVER_HOST}/` to carry
+the job token, so the clone authenticates as the running job. For that to be
+allowed, each fetched project (`crc`, `bit-ops`, `dedup-cache`) must list the
+dependant in Settings → CI/CD → Job token permissions; setting it needs the
+Maintainer role on the fetched project.
+
 ## GitHub caveat
 
 While the component repositories are private on GitHub, neither half of this setup
