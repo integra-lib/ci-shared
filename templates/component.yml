@@ -19,6 +19,9 @@ default:
 
 variables:
   LINUX_IMAGE: arch
+  # Extra arguments for the cmake configure step of the build jobs. A component's
+  # ci/before-build.sh (see below) may append to it.
+  CMAKE_EXTRA_ARGS: ""
   MAIN_BRANCH: main
   # The style configs are symlinks into the ci-shared submodule. Without this the
   # links dangle and the linters silently fall back to their built-in defaults.
@@ -83,15 +86,20 @@ pre-commit:
   # over HTTPS from this server. git has no credentials in the job, so the clone
   # dies on "could not read Username"; the job token is injected here. The
   # sibling project must list the dependant in its job-token allowlist.
+  #
+  # A component may carry ci/before-build.sh; it is sourced in the job shell, so
+  # it can prepare sources and append to CMAKE_EXTRA_ARGS.
   before_script:
     - >
       git config --global
       url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf
       "https://${CI_SERVER_HOST}/"
+    - if [ -f ci/before-build.sh ]; then . ci/before-build.sh; fi
   script:
     - >
       cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER}
       -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${CI_PROJECT_DIR}/ci-shared/third_party/googletest
+      ${CMAKE_EXTRA_ARGS}
     - cmake --build build -j
     - ctest --test-dir build --output-on-failure
 

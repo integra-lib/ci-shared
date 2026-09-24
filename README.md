@@ -52,6 +52,11 @@ allowed, each fetched project (`crc`, `bit-ops`, `dedup-cache`) must list the
 dependant in Settings → CI/CD → Job token permissions; setting it needs the
 Maintainer role on the fetched project.
 
+A component can prepare its build in `ci/before-build.sh`. The build jobs source
+it after setting up git, so it can clone sources and append cmake arguments to
+`CMAKE_EXTRA_ARGS`. The two dependants use it to build against a sibling's
+review branch while the sibling's release tag does not exist yet.
+
 ## GitHub caveat
 
 While the component repositories are private on GitHub, neither half of this setup
