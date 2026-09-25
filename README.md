@@ -59,15 +59,28 @@ review branch while the sibling's release tag does not exist yet.
 
 ## Releases
 
-The `release` job runs semantic-release on a protected `main` after a merge. It
-installs the tools with `npm install` from the ranges in `package.json` — there is
-no lock file, and `npm ci` refuses to run without one. The versions are therefore
-not pinned; add a `package-lock.json` here and to every component if that matters.
+The `release` job runs `scripts/release.py` on a protected `main` after a merge. It
+is standard-library Python taken from the `ci-shared` submodule, so the job installs
+nothing — the runner does not reach GitHub reliably, and npm or PyPI would be the
+same bet. It replaced semantic-release, whose job ran `npm ci` without a lock file
+and never succeeded.
 
-semantic-release commits `chore(release): …` with the new version and tag and
-pushes both to `main` through `GITLAB_TOKEN`. That CI/CD variable must hold a token
-with `write_repository` whose owner may push to the protected `main` (Maintainer).
-No GitLab release object is created, so `api` is not needed.
+The script reads the conventional commits since the last `vX.Y.Z` tag: a breaking
+change or `feat` raises the minor (before 1.0 a minor may break the API), `fix`,
+`perf`, `refactor`, `docs` and `build` raise the patch, anything else releases
+nothing. It writes the version into the `  VERSION x.y.z` line of `CMakeLists.txt`,
+prepends a section to `CHANGELOG.md`, commits `chore(release): a -> b [skip ci]`,
+tags `vb` and pushes both atomically. A repository without a tag is released at the
+version it already declares; a declared version above the computed one stops the
+job. `release.py --dry-run` prints the plan without changing anything.
+
+The push goes through `GITLAB_TOKEN`. That CI/CD variable must hold a token with
+`write_repository` whose owner may push to the protected `main` (Maintainer). No
+GitLab release object is created, so `api` is not needed.
+
+The components' `.releaserc.js` and `package.json` are no longer read by anything.
+
+Tests: `python3 -m unittest discover -s tests -v`.
 
 ## GitHub caveat
 

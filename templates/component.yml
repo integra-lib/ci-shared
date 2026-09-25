@@ -135,8 +135,8 @@ release:
     - git fetch origin ${CI_COMMIT_REF_NAME}
     - git checkout -B ${CI_COMMIT_REF_NAME} ${CI_COMMIT_SHA}
     - git fetch --tags --force
-  # No component carries a package-lock.json, and `npm ci` refuses to run without
-  # one, so the tools are installed from the ranges in package.json.
+  # Version, CHANGELOG.md, commit and tag from the conventional commits since the
+  # last tag. Standard-library Python from the ci-shared submodule: nothing is
+  # installed, so the job does not depend on the runner reaching npm or PyPI.
   script:
-    - npm install --no-audit --no-fund
-    - npx semantic-release
+    - python3 ci-shared/scripts/release.py --push
