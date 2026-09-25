@@ -57,6 +57,14 @@ it after setting up git, so it can clone sources and append cmake arguments to
 `CMAKE_EXTRA_ARGS`. The two dependants use it to build against a sibling's
 review branch while the sibling's release tag does not exist yet.
 
+## CI image
+
+Every job runs in `${CI_REGISTRY_IMAGE}:arch`, an image in the component's own
+registry built from `Dockerfile` here. The template's `docker` job builds and pushes
+it; it is manual and offered on `main` only. A new component has no image until
+someone runs that job once — until then its pipeline fails at the first job, pulling
+the image.
+
 ## Versions and releases
 
 There is no release job: a component's version is raised by hand, in the merge
