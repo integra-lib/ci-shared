@@ -34,7 +34,6 @@ jobs:
           diff -q .clang-format ci-shared/.clang-format
           diff -q .clang-tidy ci-shared/.clang-tidy
           diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
-          diff -q .releaserc.js ci-shared/.releaserc.js
           diff -q commitlint.config.js ci-shared/commitlint.config.js
 
   pre-commit:
@@ -66,21 +65,3 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
       - run: cmake --build build -j
       - run: ctest --test-dir build --output-on-failure
-
-  release:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [pre-commit, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm install
-      - run: npx semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

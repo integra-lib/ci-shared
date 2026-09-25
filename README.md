@@ -10,7 +10,7 @@ cannot drift into eleven different styles.
 | `templates/component.yml` | the component's `.gitlab-ci.yml` includes it with `include: project:` — nothing is copied |
 | `.github/workflows/component.yml` | the same pipeline for GitHub, called as a reusable workflow — also not copied |
 | `.clang-format`, `.clang-tidy`, `.pre-commit-config.yaml` | symlinked from the component repository into the `ci-shared` submodule |
-| `.releaserc.js`, `package.json`, `commitlint.config.js` | copied, because the tools read them from the repository root; the `config-check` job diffs the copies against this repository and fails on drift |
+| `commitlint.config.js` | copied, because commitlint reads it from the repository root; the `config-check` job diffs the copy against this repository and fails on drift |
 | `third_party/googletest` | used by the GitLab build jobs only, through `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` — see below |
 
 The submodule is a development-time dependency only: a component's
@@ -57,30 +57,24 @@ it after setting up git, so it can clone sources and append cmake arguments to
 `CMAKE_EXTRA_ARGS`. The two dependants use it to build against a sibling's
 review branch while the sibling's release tag does not exist yet.
 
-## Releases
+## Versions and releases
 
-The `release` job runs `scripts/release.py` on a protected `main` after a merge. It
-is standard-library Python taken from the `ci-shared` submodule, so the job installs
-nothing — the runner does not reach GitHub reliably, and npm or PyPI would be the
-same bet. It replaced semantic-release, whose job ran `npm ci` without a lock file
-and never succeeded.
+There is no release job: a component's version is raised by hand, in the merge
+request that changes it, and tagged after the merge.
 
-The script reads the conventional commits since the last `vX.Y.Z` tag: a breaking
-change or `feat` raises the minor (before 1.0 a minor may break the API), `fix`,
-`perf`, `refactor`, `docs` and `build` raise the patch, anything else releases
-nothing. It writes the version into the `  VERSION x.y.z` line of `CMakeLists.txt`,
-prepends a section to `CHANGELOG.md`, commits `chore(release): a -> b [skip ci]`,
-tags `vb` and pushes both atomically. A repository without a tag is released at the
-version it already declares; a declared version above the computed one stops the
-job. `release.py --dry-run` prints the plan without changing anything.
+1. The merge request raises `VERSION` in the `project()` call of `CMakeLists.txt` —
+   the minor for a breaking change or a feature (before 1.0 a minor may break the
+   API), the patch for a fix. Dependants check this number through the
+   `HWLIB_VERSION` target property, so it must match the tag.
+2. After the merge a Maintainer tags that commit on `main`:
 
-The push goes through `GITLAB_TOKEN`. That CI/CD variable must hold a token with
-`write_repository` whose owner may push to the protected `main` (Maintainer). No
-GitLab release object is created, so `api` is not needed.
+       git tag -a vX.Y.Z -m vX.Y.Z <merge commit>
+       git push origin vX.Y.Z
 
-The components' `.releaserc.js` and `package.json` are no longer read by anything.
+   Pushed tags start no pipeline.
 
-Tests: `python3 -m unittest discover -s tests -v`.
+A tag that disagrees with `VERSION` is a version check that lies to every dependant;
+tag exactly what the merged `CMakeLists.txt` says.
 
 ## GitHub caveat
 

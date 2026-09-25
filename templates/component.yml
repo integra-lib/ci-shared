@@ -43,7 +43,6 @@ workflow:
 stages:
   - validation
   - test
-  - release
 
 # A dangling symlink makes clang-format fall back to LLVM style and lets
 # pre-commit run with no configuration at all, both of which pass quietly. The
@@ -63,8 +62,8 @@ config-check:
     - diff -q .clang-format ci-shared/.clang-format
     - diff -q .clang-tidy ci-shared/.clang-tidy
     - diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
-    # The release tooling is copied rather than linked, so it is compared instead.
-    - diff -q .releaserc.js ci-shared/.releaserc.js
+    # commitlint reads its config from the repository root, so it is copied
+    # rather than linked, and compared instead.
     - diff -q commitlint.config.js ci-shared/commitlint.config.js
 
 pre-commit:
@@ -112,31 +111,3 @@ build clang:
   extends: .build_and_test
   variables:
     CXX_COMPILER: clang++
-
-release:
-  stage: release
-  image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
-  needs:
-    - job: pre-commit
-    - job: build gcc
-    - job: build clang
-  rules:
-    - if: >
-        $CI_COMMIT_BRANCH == $MAIN_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
-        && $CI_COMMIT_MESSAGE !~ /^chore\(release\)/
-  variables:
-    GIT_DEPTH: 0
-  before_script:
-    - >
-      git remote set-url origin
-      https://oauth2:${GITLAB_TOKEN}@gitlab.integrasources.com/${CI_PROJECT_PATH}.git
-    - git config --global user.name "release-bot"
-    - git config --global user.email "release-bot@integrasources.com"
-    - git fetch origin ${CI_COMMIT_REF_NAME}
-    - git checkout -B ${CI_COMMIT_REF_NAME} ${CI_COMMIT_SHA}
-    - git fetch --tags --force
-  # Version, CHANGELOG.md, commit and tag from the conventional commits since the
-  # last tag. Standard-library Python from the ci-shared submodule: nothing is
-  # installed, so the job does not depend on the runner reaching npm or PyPI.
-  script:
-    - python3 ci-shared/scripts/release.py --push
