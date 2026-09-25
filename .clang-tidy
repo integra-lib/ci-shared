@@ -39,7 +39,7 @@ Checks: >
   -concurrency-mt-unsafe,
   -performance-no-int-to-ptr,
 WarningsAsErrors: "*"
-HeaderFilterRegex: 'include/integra/.*\.hpp$'
+HeaderFilterRegex: 'include/hwlib/.*\.hpp$'
 FormatStyle: none
 CheckOptions:
   - key: bugprone-exception-escape.FunctionsThatShouldNotThrow

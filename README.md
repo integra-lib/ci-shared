@@ -1,93 +1,103 @@
 # ci-shared
 
+Build tooling shared by every integra-lib component, so that eleven repositories
+cannot drift into eleven different styles.
 
+## What a component gets from here
 
-## Getting started
+| File | How it is consumed |
+|---|---|
+| `templates/component.yml` | the component's `.gitlab-ci.yml` includes it with `include: project:` — nothing is copied |
+| `.github/workflows/component.yml` | the same pipeline for GitHub, called as a reusable workflow — also not copied |
+| `.clang-format`, `.clang-tidy`, `.pre-commit-config.yaml` | symlinked from the component repository into the `ci-shared` submodule |
+| `commitlint.config.js` | copied, because commitlint reads it from the repository root; the `config-check` job diffs the copy against this repository and fails on drift |
+| `third_party/googletest` | used by the GitLab build jobs only, through `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` — see below |
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+The submodule is a development-time dependency only: a component's
+`CMakeLists.txt` never refers to it, so a consumer that adds the component as a
+submodule does not need `--recursive`.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Pinning
 
-## Add your files
+A component pins this repository twice — the `ref:` of the CI include and the
+submodule commit. Keep them on the same tag: a pipeline running the template
+from one version against configs from another is the drift this repository
+exists to prevent.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## googletest copy
 
-```
-cd existing_repo
-git remote add origin https://gitlab.integrasources.com/internal-projects/a000-hwlib/ci-shared.git
-git branch -M main
-git push -uf origin main
-```
+The GitLab runner cannot reach GitHub reliably: cloning googletest failed with
+`Connection reset by peer` on every build job of the first hwlib pipelines. The
+GitLab build jobs therefore pass
+`-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${CI_PROJECT_DIR}/ci-shared/third_party/googletest`,
+and FetchContent uses this copy instead of downloading. Local builds and the
+GitHub workflow still download googletest as the components declare it.
 
-## Integrate with your tools
+`third_party/googletest` is googletest v1.15.2 (commit `b514bdc`) without its
+`.git` directory, unmodified, under its own BSD-3-Clause `LICENSE`. It must stay
+on the same version as the `GIT_TAG` in the components' `CMakeLists.txt`,
+otherwise CI tests against a different googletest than developers do. To update:
 
-* [Set up project integrations](https://gitlab.integrasources.com/internal-projects/a000-hwlib/ci-shared/-/settings/integrations)
+    git clone --depth 1 --branch <tag> https://github.com/google/googletest.git /tmp/gt
+    rsync -a --delete --exclude=.git /tmp/gt/ third_party/googletest/
 
-## Collaborate with your team
+then change the `GIT_TAG` in every component and the version above together.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## Sibling components in CI
 
-## Test and Deploy
+`settings-record` and `transaction-engine` fetch other components over HTTPS
+from `HWLIB_REMOTE`. The build jobs rewrite `https://${CI_SERVER_HOST}/` to carry
+the job token, so the clone authenticates as the running job. For that to be
+allowed, each fetched project (`crc`, `bit-ops`, `dedup-cache`) must list the
+dependant in Settings → CI/CD → Job token permissions; setting it needs the
+Maintainer role on the fetched project.
 
-Use the built-in continuous integration in GitLab.
+A component can prepare its build in `ci/before-build.sh`. The build jobs source
+it after setting up git, so it can clone sources and append cmake arguments to
+`CMAKE_EXTRA_ARGS`. The two dependants use it to build against a sibling's
+review branch while the sibling's release tag does not exist yet.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## CI image
 
-***
+Every job runs in `${CI_REGISTRY_IMAGE}:arch`, an image in the component's own
+registry built from `Dockerfile` here. The template's `docker` job builds and pushes
+it; it is manual and offered on `main` only. A new component has no image until
+someone runs that job once — until then its pipeline fails at the first job, pulling
+the image.
 
-# Editing this README
+## Versions and releases
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+There is no release job: a component's version is raised by hand, in the merge
+request that changes it, and tagged after the merge.
 
-## Suggestions for a good README
+1. The merge request raises `VERSION` in the `project()` call of `CMakeLists.txt` —
+   the minor for a breaking change or a feature (before 1.0 a minor may break the
+   API), the patch for a fix. Dependants check this number through the
+   `HWLIB_VERSION` target property, so it must match the tag.
+2. After the merge a Maintainer tags that commit on `main`:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+       git tag -a vX.Y.Z -m vX.Y.Z <merge commit>
+       git push origin vX.Y.Z
 
-## Name
-Choose a self-explaining name for your project.
+   Pushed tags start no pipeline.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+A tag that disagrees with `VERSION` is a version check that lies to every dependant;
+tag exactly what the merged `CMakeLists.txt` says.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## GitHub caveat
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+While the component repositories are private on GitHub, neither half of this setup
+works there, and all three failures were reproduced on the organisation:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+* a reusable workflow living in a private repository cannot be called — the run
+  ends in `startup_failure` before any job starts, even with the repository's
+  Actions access set to `organization`;
+* the default `GITHUB_TOKEN` reaches its own repository only, so checking out this
+  repository as a submodule fails with `remote: Repository not found`;
+* for the same reason `transaction-engine` cannot fetch its sibling components, and
+  its standalone build dies with `fatal: Could not read from remote repository`.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+So on GitHub every component carries a self-contained build-and-test workflow and
+`transaction-engine` runs only on demand. GitLab has neither limitation: a job token
+reaches sibling projects of the same group, subject to the project's job-token
+allowlist, which has to be set for `transaction-engine`.

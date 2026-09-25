@@ -1,68 +1,135 @@
+# Shared pipeline for every integra-lib component.
+#
+# A component repository includes it with:
+#
+#   include:
+#     - project: 'internal-projects/a000-hwlib/ci-shared'
+#       ref: <pinned tag>
+#       file: '/templates/component.yml'
+#
+# The include only brings this YAML. Everything else the jobs read — the style
+# configs — comes from the ci-shared submodule, hence GIT_SUBMODULE_STRATEGY.
+
+default:
+  interruptible: true
+  tags:
+    - linux
+  artifacts:
+    expire_in: 1 week
+
+variables:
+  LINUX_IMAGE: arch
+  # Extra arguments for the cmake configure step of the build jobs. A component's
+  # ci/before-build.sh (see below) may append to it.
+  CMAKE_EXTRA_ARGS: ""
+  MAIN_BRANCH: main
+  # The style configs are symlinks into the ci-shared submodule. Without this the
+  # links dangle and the linters silently fall back to their built-in defaults.
+  GIT_SUBMODULE_STRATEGY: normal
+
 workflow:
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - when: never
 
 stages:
-  - lint
+  - validation
   - test
   - docker
 
-variables:
-  GIT_SUBMODULE_STRATEGY: normal
-  LINUX_IMAGE: arch
-
-before_script:
-  - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.integrasources.com/".insteadOf "https://gitlab.integrasources.com/"
-
+# A dangling symlink makes clang-format fall back to LLVM style and lets
+# pre-commit run with no configuration at all, both of which pass quietly. The
+# pipeline therefore proves the configs are readable before trusting any linter.
 config-check:
-  stage: lint
+  stage: validation
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
   script:
-    - pre-commit run --all-files
-    - if [ -f ci-shared/.pre-commit-config.yaml ]; then diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml; fi
-    - if [ -f ci-shared/.clang-format ]; then diff -q .clang-format ci-shared/.clang-format; fi
-    - if [ -f ci-shared/.clang-tidy ]; then diff -q .clang-tidy ci-shared/.clang-tidy; fi
+    - |
+      for f in .clang-format .clang-tidy .pre-commit-config.yaml; do
+        if [ ! -r "$f" ]; then
+          echo "$f is not readable — is the ci-shared submodule checked out?" >&2
+          exit 1
+        fi
+        echo "ok: $f -> $(readlink -f "$f")"
+      done
+    - diff -q .clang-format ci-shared/.clang-format
+    - diff -q .clang-tidy ci-shared/.clang-tidy
+    - diff -q .pre-commit-config.yaml ci-shared/.pre-commit-config.yaml
+    # commitlint reads its config from the repository root, so it is copied
+    # rather than linked, and compared instead.
+    - diff -q commitlint.config.js ci-shared/commitlint.config.js
 
 pre-commit:
-  stage: lint
+  stage: validation
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  needs: [config-check]
   script:
-    - pre-commit run --all-files
+    - clang-format --version
+    - pre-commit run --all-files --show-diff-on-failure
 
-.test_job:
+.build_and_test:
   stage: test
   image: ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}
+  # The runner cannot reach GitHub reliably, so FetchContent is pointed at the
+  # googletest copy in the ci-shared submodule instead of cloning it. The copy's
+  # version must match the GIT_TAG the components declare (see README).
+  #
+  # Components with siblings (settings-record, transaction-engine) fetch them
+  # over HTTPS from this server. git has no credentials in the job, so the clone
+  # dies on "could not read Username"; the job token is injected here. The
+  # sibling project must list the dependant in its job-token allowlist.
+  #
+  # A component may carry ci/before-build.sh; it is sourced in the job shell, so
+  # it can prepare sources and append to CMAKE_EXTRA_ARGS.
+  before_script:
+    - >
+      git config --global
+      url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf
+      "https://${CI_SERVER_HOST}/"
+    - if [ -f ci/before-build.sh ]; then . ci/before-build.sh; fi
   script:
-    - cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/opt/deps/googletest-src
+    - >
+      cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${CXX_COMPILER}
+      -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${CI_PROJECT_DIR}/ci-shared/third_party/googletest
+      ${CMAKE_EXTRA_ARGS}
     - cmake --build build -j
-    - cd build && ctest --output-on-failure
+    - ctest --test-dir build --output-on-failure
 
 build gcc:
-  extends: .test_job
+  extends: .build_and_test
   variables:
     CXX_COMPILER: g++
 
 build clang:
-  extends: .test_job
+  extends: .build_and_test
   variables:
     CXX_COMPILER: clang++
 
+# Builds this project's CI image from ci-shared/Dockerfile and pushes it as
+# ${CI_REGISTRY_IMAGE}:${LINUX_IMAGE}, which every job above runs in. Manual and on
+# main only: a new component runs it once to get its image, an existing one when the
+# Dockerfile changes.
 docker:
   stage: docker
   image: docker:latest
   services:
     - docker:dind
+  needs: []
   before_script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - docker build -t $CI_REGISTRY_IMAGE:$LINUX_IMAGE -f ci-shared/Dockerfile ci-shared/
     - docker push $CI_REGISTRY_IMAGE:$LINUX_IMAGE
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == $MAIN_BRANCH
       when: manual
+      allow_failure: true
   timeout: 30m
