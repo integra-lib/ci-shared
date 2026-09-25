@@ -57,6 +57,18 @@ it after setting up git, so it can clone sources and append cmake arguments to
 `CMAKE_EXTRA_ARGS`. The two dependants use it to build against a sibling's
 review branch while the sibling's release tag does not exist yet.
 
+## Releases
+
+The `release` job runs semantic-release on a protected `main` after a merge. It
+installs the tools with `npm install` from the ranges in `package.json` — there is
+no lock file, and `npm ci` refuses to run without one. The versions are therefore
+not pinned; add a `package-lock.json` here and to every component if that matters.
+
+semantic-release commits `chore(release): …` with the new version and tag and
+pushes both to `main` through `GITLAB_TOKEN`. That CI/CD variable must hold a token
+with `write_repository` whose owner may push to the protected `main` (Maintainer).
+No GitLab release object is created, so `api` is not needed.
+
 ## GitHub caveat
 
 While the component repositories are private on GitHub, neither half of this setup

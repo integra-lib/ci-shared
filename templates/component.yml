@@ -135,6 +135,8 @@ release:
     - git fetch origin ${CI_COMMIT_REF_NAME}
     - git checkout -B ${CI_COMMIT_REF_NAME} ${CI_COMMIT_SHA}
     - git fetch --tags --force
+  # No component carries a package-lock.json, and `npm ci` refuses to run without
+  # one, so the tools are installed from the ranges in package.json.
   script:
-    - npm ci
+    - npm install --no-audit --no-fund
     - npx semantic-release
